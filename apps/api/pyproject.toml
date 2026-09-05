@@ -1,0 +1,44 @@
+[project]
+name = "resonant-api"
+version = "0.1.0"
+description = "FastAPI backend for Resonant."
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "pydantic>=2.8.0",
+  "pydantic-settings>=2.4.0",
+  "httpx>=0.27.0",
+  "python-multipart>=0.0.9",
+  "supabase>=2.6.0",
+  "langgraph>=0.2.0",
+  "litellm>=1.44.0",
+  "cryptography>=43.0.0",
+  "pypdf>=4.3.0",
+  "python-docx>=1.1.2"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+  "ruff>=0.6.0",
+  "mypy>=1.11.0",
+  "pip-audit>=2.7.0",
+  "deepeval>=1.0.0"
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["apps/api"]
+testpaths = ["tests/api", "tests/security"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"app/api/routes/*.py" = ["B008"]
+"app/core/auth.py" = ["B008"]

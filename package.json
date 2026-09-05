@@ -1,0 +1,37 @@
+{
+  "name": "resonant",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Secure AI job-finding agent portfolio project.",
+  "workspaces": [
+    "apps/web",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev:web": "npm --workspace apps/web run dev",
+    "dev:api": "python3 scripts/api_python.py -m uvicorn app.main:app --app-dir apps/api --reload --host 0.0.0.0 --port 8000",
+    "lint": "npm run lint:web && npm run lint:api",
+    "lint:web": "npm --workspace apps/web run lint",
+    "lint:api": "python3 scripts/api_python.py -m ruff check apps/api tests evals",
+    "typecheck": "npm --workspace apps/web run typecheck && npm --workspace packages/shared run typecheck",
+    "test": "npm run test:api",
+    "test:api": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 scripts/api_python.py -m pytest tests/api tests/security evals/deepeval",
+    "security:scan": "python3 scripts/scan_secrets.py",
+    "repo:hygiene": "python3 scripts/repo_hygiene.py",
+    "hooks:install": "python3 scripts/install_git_hooks.py",
+    "hooks:check": "python3 scripts/install_git_hooks.py --check",
+    "audit": "npm audit --audit-level=moderate && npm run audit:python",
+    "audit:python": "python3 scripts/api_python.py -m pip_audit",
+    "deploy:check": "python3 scripts/deploy_readiness.py --env-file .env.example",
+    "deploy:check:prod": "python3 scripts/deploy_readiness.py --env-file .env.production.local --production",
+    "smoke:urls": "python3 scripts/smoke_urls.py",
+    "smoke:demo": "python3 scripts/demo_smoke.py",
+    "eval:deepeval": "python3 scripts/api_python.py -m pytest evals/deepeval",
+    "eval:promptfoo": "PROMPTFOO_CONFIG_DIR=/tmp/resonant-promptfoo PROMPTFOO_DISABLE_TELEMETRY=1 PROMPTFOO_DISABLE_WAL_MODE=true npx promptfoo@0.122.2 eval -c evals/promptfoo/promptfooconfig.yaml --no-progress-bar",
+    "e2e": "npm --workspace apps/web run e2e"
+  },
+  "engines": {
+    "node": ">=20.20.0",
+    "python": ">=3.11"
+  }
+}

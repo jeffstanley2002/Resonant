@@ -1,0 +1,32 @@
+[
+  {
+    "name": "ai_backend",
+    "resume": "Python FastAPI Postgres LangGraph API engineering",
+    "relevant": {"title": "AI Backend Engineer", "description": "Build Python FastAPI Postgres LangGraph APIs."},
+    "irrelevant": {"title": "Retail Associate", "description": "Customer service and store operations."}
+  },
+  {
+    "name": "frontend",
+    "resume": "TypeScript JavaScript React Next.js Playwright",
+    "relevant": {"title": "Frontend Engineer", "description": "Build React Next.js applications with TypeScript and Playwright."},
+    "irrelevant": {"title": "Accountant", "description": "Accounting and financial analysis."}
+  },
+  {
+    "name": "data_analyst",
+    "resume": "SQL data analysis Excel Tableau communication",
+    "relevant": {"title": "Data Analyst", "description": "Use SQL, Excel, Tableau, and data analysis to guide teams."},
+    "irrelevant": {"title": "Cloud Engineer", "description": "Operate AWS Docker infrastructure."}
+  },
+  {
+    "name": "marketing",
+    "resume": "Marketing SEO content strategy stakeholder management",
+    "relevant": {"title": "Content Marketing Specialist", "description": "Own marketing, SEO, content strategy, and stakeholder management."},
+    "irrelevant": {"title": "Backend Engineer", "description": "Develop Python FastAPI services."}
+  },
+  {
+    "name": "operations",
+    "resume": "Project management operations customer service communication",
+    "relevant": {"title": "Operations Coordinator", "description": "Lead project management, operations, customer service, and communication."},
+    "irrelevant": {"title": "Machine Learning Engineer", "description": "Build Python machine learning systems."}
+  }
+]

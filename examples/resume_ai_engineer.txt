@@ -1,0 +1,28 @@
+Jordan Lee
+AI Engineer
+
+Summary
+Full-stack AI engineer with experience building secure agentic applications, resume parsing workflows, job-matching systems, and production dashboards. Comfortable designing systems that combine deterministic business logic with LLM-assisted reasoning.
+
+Skills
+- Python, FastAPI, Pydantic, Pytest
+- TypeScript, React, Next.js, Playwright
+- LangGraph, structured LLM outputs, model routing, prompt evaluation
+- Supabase, Postgres, row-level security, authentication
+- Security headers, CSRF protection, upload validation, dependency auditing
+- Vercel, Render, GitHub Actions, observability, analytics
+
+Projects
+Resonant
+- Built a secure AI job-finding agent that parses resumes, extracts skills, ranks job postings, and generates coaching.
+- Added DeepEval regression tests and Promptfoo prompt-injection checks.
+- Implemented zero-cost fallback behavior, TTL caches, and model telemetry.
+
+Experience
+Software Engineering Intern
+- Built internal tools with React, FastAPI, and Postgres.
+- Added automated tests, input validation, and CI checks.
+
+Education
+Computer Science student focused on AI engineering, security, and full-stack systems.
+

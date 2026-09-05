@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Bookmark, BriefcaseBusiness, Check, FileSearch, Sparkles, Waypoints } from "lucide-react";
+import { ArrowRight, Waypoints } from "lucide-react";
 import { motion } from "framer-motion";
 import { AuthPage, type AuthMode } from "./auth-dialog";
 
@@ -17,10 +17,10 @@ type LandingPageProps = {
 };
 
 const sequence = [
-  { icon: FileSearch, label: "Resume evidence" },
-  { icon: BriefcaseBusiness, label: "Ranked roles" },
-  { icon: Waypoints, label: "Skill gaps" },
-  { icon: Bookmark, label: "Saved roles" },
+  "Resume evidence",
+  "Ranked roles",
+  "Skill gaps",
+  "Saved roles",
 ];
 
 export function LandingPage(props: LandingPageProps) {
@@ -79,7 +79,7 @@ export function LandingPage(props: LandingPageProps) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}
         >
-          <p className="hero-kicker"><Sparkles aria-hidden="true" /> Career intelligence for Singapore</p>
+          <p className="hero-kicker">Career intelligence for Singapore</p>
           <h1>Find the roles your experience is already pointing toward.</h1>
           <p>
             Upload one resume. Get explainable job matches, the skills employers keep asking for,
@@ -95,9 +95,8 @@ export function LandingPage(props: LandingPageProps) {
             ) : null}
           </div>
           <div className="hero-proof" aria-label="Product assurances">
-            <span><Check aria-hidden="true" /> Private by design</span>
-            <span><Check aria-hidden="true" /> Explainable scores</span>
-            <span><Check aria-hidden="true" /> Free-tier friendly</span>
+            <span>Private by design</span>
+            <span>Explainable scores</span>
           </div>
         </motion.div>
 
@@ -108,9 +107,8 @@ export function LandingPage(props: LandingPageProps) {
           transition={{ duration: 0.55, delay: 0.28 }}
           aria-label="How Resonant works"
         >
-          {sequence.map(({ icon: Icon, label }) => (
+          {sequence.map((label) => (
             <div className="signal-step" key={label}>
-              <Icon aria-hidden="true" />
               <span>{label}</span>
             </div>
           ))}

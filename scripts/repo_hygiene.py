@@ -55,10 +55,18 @@ def validate_hygiene() -> list[HygieneFinding]:
 
 
 def is_ignored(path: str) -> bool:
+    candidates = [path]
+    if not path.endswith("/"):
+        candidates.append(f"{path}/")
+    root = repository_root()
+    return any(_check_ignored(candidate, root) for candidate in candidates)
+
+
+def _check_ignored(path: str, root: str) -> bool:
     result = subprocess.run(
         ["git", "check-ignore", "--quiet", path],
         check=False,
-        cwd=repository_root(),
+        cwd=root,
     )
     return result.returncode == 0
 

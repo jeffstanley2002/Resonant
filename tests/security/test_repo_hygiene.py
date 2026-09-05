@@ -49,3 +49,31 @@ def test_is_ignored_uses_git_check_ignore(monkeypatch) -> None:
         ["git", "rev-parse", "--show-toplevel"],
         ["git", "check-ignore", "--quiet", ".env"],
     ]
+
+
+def test_is_ignored_checks_directory_patterns_when_path_is_absent(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout="/tmp/repo\n")
+
+    monkeypatch.setattr(hygiene.subprocess, "run", run)
+
+    assert hygiene.is_ignored("apps/web/.next") is True
+    assert calls[-1] == ["git", "check-ignore", "--quiet", "apps/web/.next"]
+
+
+def test_is_ignored_falls_back_to_trailing_slash_for_absent_directories(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):
+        calls.append(args)
+        if args[-1] == "apps/web/.next":
+            return SimpleNamespace(returncode=1, stdout="/tmp/repo\n")
+        return SimpleNamespace(returncode=0, stdout="/tmp/repo\n")
+
+    monkeypatch.setattr(hygiene.subprocess, "run", run)
+
+    assert hygiene.is_ignored("apps/web/.next") is True
+    assert calls[-1] == ["git", "check-ignore", "--quiet", "apps/web/.next/"]

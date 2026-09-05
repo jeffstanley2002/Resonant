@@ -1,0 +1,62 @@
+services:
+  - type: web
+    name: resonant-api
+    runtime: python
+    plan: free
+    rootDir: apps/api
+    buildCommand: python -m pip install --upgrade pip setuptools && pip install -e .
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /ready
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DEMO_AUTH
+        value: "false"
+      - key: ALLOW_DEMO_DATA
+        value: "false"
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: APP_ENCRYPTION_KEY
+        sync: false
+      - key: ADZUNA_APP_ID
+        sync: false
+      - key: ADZUNA_APP_KEY
+        sync: false
+      - key: ADZUNA_COUNTRY
+        value: sg
+      - key: APIFY_MCF_RUN_URL
+        sync: false
+      - key: APIFY_API_TOKEN
+        sync: false
+      - key: APIFY_MCF_COUNTRY
+        value: Singapore
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CHEAP_MODEL
+        sync: false
+      - key: STRONG_MODEL
+        sync: false
+      - key: HELICONE_API_KEY
+        sync: false
+      - key: TURNSTILE_SECRET_KEY
+        sync: false
+      - key: DEFAULT_JOB_LIMIT
+        value: "20"
+      - key: MAX_JOB_LIMIT
+        value: "40"
+      - key: MAX_UPLOAD_BYTES
+        value: "5242880"
+      - key: DAILY_MATCH_LIMIT
+        value: "20"
+      - key: MODEL_CALL_TIMEOUT_SECONDS
+        value: "8"
+      - key: MODEL_TASK_BUDGET_SECONDS
+        value: "20"

@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: npm install
+      - run: python -m pip install --upgrade pip setuptools
+      - run: python -m pip install -e 'apps/api[dev]'
+      - run: npm run security:scan
+      - run: npm run repo:hygiene
+      - run: npm audit --audit-level=moderate
+      - run: python -m pip_audit
+      - run: npm run deploy:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm --workspace apps/web run build
+      - run: npm run test:api
+      - run: npm run eval:promptfoo
+      - run: npx playwright install --with-deps chromium
+      - run: npm --workspace apps/web run e2e

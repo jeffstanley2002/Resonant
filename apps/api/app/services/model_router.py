@@ -182,7 +182,7 @@ class ModelRouter:
             "extract": 900,
             "normalize": 4000,
             "match": 6000,
-            "rank": 500,
+            "rank": 1500,
         }.get(task, 1800)
 
     @staticmethod

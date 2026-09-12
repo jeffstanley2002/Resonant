@@ -431,6 +431,82 @@ def test_ranking_timeout_preserves_existing_order(monkeypatch) -> None:
     assert telemetry["ranking_degraded_to_baseline"] is True
 
 
+def test_invalid_ranking_preserves_existing_order(monkeypatch) -> None:
+    class InvalidRouter:
+        async def complete(self, task: str, prompt: str) -> ModelResult:
+            assert task == "rank"
+            return ModelResult(
+                content="{not valid json",
+                model="test/model",
+                provider="test",
+                latency_ms=2,
+                estimated_cost_usd=0.001,
+                fallback=False,
+                attempts=1,
+            )
+
+    monkeypatch.setattr("app.services.ranking.model_router", InvalidRouter())
+    matches = score_jobs(
+        skills=sample_skills(),
+        jobs=[
+            JobPosting(
+                external_id="job_1",
+                title="AI Backend Engineer",
+                company="SignalWorks",
+                location="Singapore",
+                description="Build Python FastAPI LangGraph services.",
+                url="https://example.com/job",
+                required_skills=["Python", "FastAPI", "LangGraph"],
+            )
+        ],
+    )
+
+    ranked, telemetry, stage = asyncio.run(synthesize_ranking(matches))
+
+    assert stage.status == "partial"
+    assert ranked == matches
+    assert telemetry["ranking_validation_failed"] is True
+    assert telemetry["ranking_degraded_to_baseline"] is True
+
+
+def test_ranking_identity_mismatch_preserves_existing_order(monkeypatch) -> None:
+    class MismatchRouter:
+        async def complete(self, task: str, prompt: str) -> ModelResult:
+            assert task == "rank"
+            return ModelResult(
+                content='{"ordered_external_ids": ["not_a_real_job"]}',
+                model="test/model",
+                provider="test",
+                latency_ms=2,
+                estimated_cost_usd=0.001,
+                fallback=False,
+                attempts=1,
+            )
+
+    monkeypatch.setattr("app.services.ranking.model_router", MismatchRouter())
+    matches = score_jobs(
+        skills=sample_skills(),
+        jobs=[
+            JobPosting(
+                external_id="job_1",
+                title="AI Backend Engineer",
+                company="SignalWorks",
+                location="Singapore",
+                description="Build Python FastAPI LangGraph services.",
+                url="https://example.com/job",
+                required_skills=["Python", "FastAPI", "LangGraph"],
+            )
+        ],
+    )
+
+    ranked, telemetry, stage = asyncio.run(synthesize_ranking(matches))
+
+    assert stage.status == "partial"
+    assert ranked == matches
+    assert telemetry["ranking_identity_validation_failed"] is True
+    assert telemetry["ranking_degraded_to_baseline"] is True
+
+
 def sample_skills():
     from app.schemas import Skill
 

@@ -94,7 +94,7 @@ def test_model_router_bounds_output_by_task() -> None:
     assert model_router._max_output_tokens("extract") == 900
     assert model_router._max_output_tokens("normalize") == 4000
     assert model_router._max_output_tokens("match") == 6000
-    assert model_router._max_output_tokens("rank") == 500
+    assert model_router._max_output_tokens("rank") == 1500
 
 
 def test_model_router_keeps_provider_specific_reasoning_options_empty() -> None:

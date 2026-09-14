@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -12,6 +13,7 @@ from app.core.bot_protection import verify_bot_protection
 from app.core.config import settings
 from app.core.encryption import validate_encryption_key
 from app.core.rate_limit import rate_limiter
+from app.services.model_router import warm_model_client
 
 
 def production_configuration_errors() -> list[str]:
@@ -37,7 +39,12 @@ async def lifespan(_app: FastAPI):
     errors = production_configuration_errors()
     if errors:
         raise RuntimeError(f"Unsafe production configuration: {'; '.join(errors)}")
-    yield
+    # Warm in the background so the port still binds immediately for the health check.
+    warmup = asyncio.create_task(warm_model_client())
+    try:
+        yield
+    finally:
+        warmup.cancel()
 
 
 app = FastAPI(

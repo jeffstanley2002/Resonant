@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import hashlib
-import logging
 
 from fastapi import APIRouter, Depends, File, UploadFile
 
 from app.core.auth import AuthUser, require_user
+from app.core.logging import log_event
 from app.schemas import ResumeAnalysis
 from app.services.ai_extraction import analyze_resume_text
 from app.services.resume_parser import parse_upload
 from app.services.storage import save_resume_analysis
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
-logger = logging.getLogger(__name__)
 
 
 @router.post("/analyze", response_model=ResumeAnalysis)
@@ -50,9 +49,10 @@ async def analyze_resume(
     try:
         await save_resume_analysis(user_id=user.id, resume_hash=digest, analysis=analysis)
     except Exception as exc:
-        logger.warning(
+        log_event(
             "resume_analysis_persistence_failed",
-            extra={"error_class": type(exc).__name__},
+            error_class=type(exc).__name__,
+            error_detail=str(exc)[:200],
         )
         analysis.telemetry["storage_persisted"] = False
         analysis.telemetry["storage_error_class"] = type(exc).__name__

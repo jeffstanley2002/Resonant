@@ -123,8 +123,9 @@ def test_model_router_does_not_repeat_a_call_that_exhausted_its_own_deadline(mon
 
     result = asyncio.run(model_router.complete("match", "match these"))
 
-    # One attempt per candidate model, with no identical retry of the timed-out call.
-    assert calls == ["gpt-5", "gpt-5.6-luna"]
+    # The first model does not repeat: the alternative is the better bet. The last
+    # model has nothing to fall back to, so it retries rather than giving up.
+    assert calls == ["gpt-5", "gpt-5.6-luna", "gpt-5.6-luna"]
     assert result.fallback is True
     assert result.fallback_reason == "provider_error"
 
@@ -150,3 +151,59 @@ def test_model_router_skips_attempts_the_budget_cannot_complete(monkeypatch) -> 
 
     assert calls == ["gpt-5"]
     assert result.attempts == 1
+
+
+def test_model_router_retries_the_only_candidate_after_a_deadline(monkeypatch) -> None:
+    """A single-model task must not give up after one attempt.
+
+    A cold worker can burn the first deadline on setup alone, and every task is
+    single-model whenever CHEAP_MODEL matches the built-in OpenAI default.
+    """
+    timeouts: list[float] = []
+
+    async def hang(task, prompt, model, start):
+        await asyncio.sleep(5)
+        raise AssertionError("should have been cancelled")
+
+    real_wait_for = asyncio.wait_for
+
+    async def record_wait_for(awaitable, timeout):
+        timeouts.append(timeout)
+        return await real_wait_for(awaitable, timeout)
+
+    monkeypatch.setattr("app.services.model_router.settings.cheap_model", "gpt-5.6-luna")
+    monkeypatch.setattr("app.services.model_router.settings.openai_api_key", "openai-key")
+    monkeypatch.setattr("app.services.model_router.settings.model_call_timeout_seconds", 0.1)
+    monkeypatch.setattr("app.services.model_router.settings.model_task_budget_seconds", 5.0)
+    monkeypatch.setattr(model_router, "_litellm_complete", hang)
+    monkeypatch.setattr("app.services.model_router.asyncio.wait_for", record_wait_for)
+
+    assert model_router._candidate_models("extract") == ["gpt-5.6-luna"]
+
+    result = asyncio.run(model_router.complete("extract", "skills"))
+
+    assert result.attempts == 2
+    # The retry gets more room than the deadline that just failed.
+    assert timeouts[1] > timeouts[0]
+
+
+def test_model_router_loads_litellm_outside_the_call_deadline(monkeypatch) -> None:
+    """A cold litellm import used to be charged against the model timeout."""
+    events: list[str] = []
+
+    def slow_import():
+        events.append("import")
+
+    async def succeed(task, prompt, model, start):
+        events.append("call")
+        return model_router_fallback_result(model)
+
+    monkeypatch.setattr("app.services.model_router.settings.cheap_model", "gpt-5.6-luna")
+    monkeypatch.setattr("app.services.model_router.settings.openai_api_key", "openai-key")
+    monkeypatch.setattr("app.services.model_router._load_acompletion", slow_import)
+    monkeypatch.setattr(model_router, "_litellm_complete", succeed)
+
+    result = asyncio.run(model_router.complete("extract", "skills"))
+
+    assert events == ["import", "call"]
+    assert result.fallback is False

@@ -24,6 +24,7 @@
     "audit:python": "python3 scripts/api_python.py -m pip_audit",
     "deploy:check": "python3 scripts/deploy_readiness.py --env-file .env.example",
     "deploy:check:prod": "python3 scripts/deploy_readiness.py --env-file .env.production.local --production",
+    "schema:check": "python3 scripts/api_python.py scripts/check_supabase_schema.py",
     "smoke:urls": "python3 scripts/smoke_urls.py",
     "smoke:demo": "python3 scripts/demo_smoke.py",
     "eval:deepeval": "python3 scripts/api_python.py -m pytest evals/deepeval",

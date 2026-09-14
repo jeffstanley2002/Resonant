@@ -240,3 +240,18 @@ def test_render_manifest_contains_model_and_cost_controls() -> None:
         "MODEL_TASK_BUDGET_SECONDS",
     ]:
         assert f"key: {key}" in render_yaml
+
+
+def test_schema_check_covers_every_table_the_api_writes() -> None:
+    """Schema drift is silent at runtime, so the check must not miss a table."""
+    import sys
+
+    sys.path.insert(0, str(pathlib.Path("scripts").resolve()))
+    from check_supabase_schema import EXPECTED_COLUMNS
+
+    sys.path.insert(0, str(pathlib.Path("apps/api").resolve()))
+    from app.services.storage import USER_DATA_TABLES
+
+    assert set(USER_DATA_TABLES) == set(EXPECTED_COLUMNS)
+    # The columns migration 002 adds are exactly the ones that were missing in production.
+    assert {"analysis_mode", "telemetry"}.issubset(EXPECTED_COLUMNS["resume_analyses"])

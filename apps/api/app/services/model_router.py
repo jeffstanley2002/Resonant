@@ -25,6 +25,28 @@ class ModelResult:
     output_tokens: int = 0
 
 
+_acompletion: Any = None
+
+
+def _load_acompletion() -> Any:
+    """Import litellm once. Slow and blocking, so never call it on the event loop."""
+    global _acompletion
+    if _acompletion is None:
+        from litellm import acompletion
+
+        _acompletion = acompletion
+    return _acompletion
+
+
+async def warm_model_client() -> None:
+    """Pay litellm's import cost at startup instead of on the first user request."""
+    try:
+        await asyncio.to_thread(_load_acompletion)
+        log_event("model_client_warmed")
+    except Exception as exc:  # pragma: no cover - warmup is best effort
+        log_event("model_client_warmup_failed", error_class=type(exc).__name__)
+
+
 class ModelRouter:
     """Cost-aware provider routing with explicit failure results."""
 
@@ -34,29 +56,35 @@ class ModelRouter:
         attempts = 0
         call_timeout = max(0.05, float(settings.model_call_timeout_seconds))
         budget = max(call_timeout, float(settings.model_task_budget_seconds))
-        for model in self._candidate_models(task):
+        # Importing litellm is slow and blocking. Doing it here rather than inside the
+        # call keeps a cold worker's import cost off the model deadline, where it would
+        # otherwise consume the whole timeout and block the loop from cancelling it.
+        await asyncio.to_thread(_load_acompletion)
+        candidates = self._candidate_models(task)
+        for index, model in enumerate(candidates):
+            has_alternative = index + 1 < len(candidates)
+            attempt_timeout = call_timeout
             for retry in range(2):
                 remaining = budget - (time.perf_counter() - start)
-                # Only start an attempt the budget can carry for a full call timeout.
-                # A truncated slice is guaranteed to time out and just burns the budget
+                # Only start an attempt the budget can carry to its full timeout. A
+                # truncated slice is guaranteed to time out and just burns the budget
                 # that the next candidate model needs.
-                if remaining < call_timeout:
+                if remaining < attempt_timeout:
                     break
                 attempts += 1
                 attempt_started = time.perf_counter()
                 try:
                     result = await asyncio.wait_for(
                         self._litellm_complete(task, prompt, model, start),
-                        timeout=call_timeout,
+                        timeout=attempt_timeout,
                     )
                     return ModelResult(**{**result.__dict__, "attempts": attempts})
                 except Exception as exc:
                     errors.append(exc)
                     # Distinguish our own deadline from a fast provider-side error:
-                    # both surface as TimeoutError, but re-running a call that already
-                    # exhausted the deadline will only exhaust it again.
+                    # both surface as TimeoutError, but they call for different recovery.
                     deadline_exhausted = isinstance(exc, TimeoutError) and (
-                        time.perf_counter() - attempt_started >= call_timeout - 0.5
+                        time.perf_counter() - attempt_started >= attempt_timeout - 0.5
                     )
                     log_event(
                         "model_provider_attempt_failed",
@@ -67,8 +95,19 @@ class ModelRouter:
                         error_class=type(exc).__name__,
                         status_code=getattr(exc, "status_code", None),
                         deadline_exhausted=deadline_exhausted,
+                        attempt_timeout_seconds=round(attempt_timeout, 2),
                     )
-                    if retry == 0 and self._is_transient_error(exc) and not deadline_exhausted:
+                    if deadline_exhausted:
+                        # Another candidate model is a better bet than the one that just
+                        # ran out of time. With no alternative to move to, retry with more
+                        # room instead of giving up after a single attempt.
+                        if has_alternative or retry > 0:
+                            break
+                        attempt_timeout = min(
+                            call_timeout * 2, budget - (time.perf_counter() - start)
+                        )
+                        continue
+                    if retry == 0 and self._is_transient_error(exc):
                         await asyncio.sleep(0.05)
                         continue
                     break
@@ -93,7 +132,7 @@ class ModelRouter:
         model: str,
         start: float,
     ) -> ModelResult:
-        from litellm import acompletion
+        acompletion = _load_acompletion()
 
         response = await acompletion(
             model=model,

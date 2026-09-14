@@ -100,3 +100,53 @@ def test_model_router_bounds_output_by_task() -> None:
 def test_model_router_keeps_provider_specific_reasoning_options_empty() -> None:
     assert model_router._reasoning_options("gpt-5.6-luna") == {}
     assert model_router._reasoning_options("groq/openai/gpt-oss-20b") == {}
+
+
+def test_model_router_does_not_repeat_a_call_that_exhausted_its_own_deadline(monkeypatch) -> None:
+    """A wait_for deadline means the call already burned the full timeout.
+
+    Re-running it identically only burns the budget the fallback model needs.
+    """
+    calls: list[str] = []
+
+    async def hang(task, prompt, model, start):
+        calls.append(model)
+        await asyncio.sleep(5)
+        raise AssertionError("should have been cancelled")
+
+    monkeypatch.setattr("app.services.model_router.settings.cheap_model", "gpt-5")
+    monkeypatch.setattr("app.services.model_router.settings.strong_model", "gpt-5.6-terra")
+    monkeypatch.setattr("app.services.model_router.settings.openai_api_key", "openai-key")
+    monkeypatch.setattr("app.services.model_router.settings.model_call_timeout_seconds", 0.05)
+    monkeypatch.setattr("app.services.model_router.settings.model_task_budget_seconds", 5.0)
+    monkeypatch.setattr(model_router, "_litellm_complete", hang)
+
+    result = asyncio.run(model_router.complete("match", "match these"))
+
+    # One attempt per candidate model, with no identical retry of the timed-out call.
+    assert calls == ["gpt-5", "gpt-5.6-luna"]
+    assert result.fallback is True
+    assert result.fallback_reason == "provider_error"
+
+
+def test_model_router_skips_attempts_the_budget_cannot_complete(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def hang(task, prompt, model, start):
+        calls.append(model)
+        await asyncio.sleep(5)
+        raise AssertionError("should have been cancelled")
+
+    monkeypatch.setattr("app.services.model_router.settings.cheap_model", "gpt-5")
+    monkeypatch.setattr("app.services.model_router.settings.strong_model", "gpt-5.6-terra")
+    monkeypatch.setattr("app.services.model_router.settings.openai_api_key", "openai-key")
+    monkeypatch.setattr("app.services.model_router.settings.model_call_timeout_seconds", 0.2)
+    # Budget covers one full call timeout only; the second must not start on a slice
+    # of time too short to ever succeed.
+    monkeypatch.setattr("app.services.model_router.settings.model_task_budget_seconds", 0.3)
+    monkeypatch.setattr(model_router, "_litellm_complete", hang)
+
+    result = asyncio.run(model_router.complete("match", "match these"))
+
+    assert calls == ["gpt-5"]
+    assert result.attempts == 1

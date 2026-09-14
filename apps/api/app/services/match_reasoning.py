@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import time
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
@@ -13,11 +16,14 @@ from app.services.ai_extraction import (
     prefixed_model_telemetry,
     sanitize_lines,
 )
-from app.services.model_router import model_router
+from app.services.model_router import ModelResult, model_router
 from app.services.sanitization import sanitize_untrusted_text
 from app.services.structured_output import json_object_from_text
 
 MAX_REASONED_MATCHES = 12
+# One call covering every role runs long enough to trip the per-call timeout, and a
+# single timeout would then drop all of them. Small batches run concurrently instead.
+MATCH_BATCH_SIZE = 4
 
 
 class MatchReasoning(BaseModel):
@@ -39,88 +45,169 @@ class MatchReasoningEnvelope(BaseModel):
 MAX_MATCH_ATTEMPTS = 2
 
 
+@dataclass
+class _BatchOutcome:
+    """One batch of roles: either AI reasoning, or the reason it could not be produced."""
+
+    reasoned: list[JobMatch]
+    results: list[ModelResult]
+    validation_failed: bool
+    failure_reason: str | None
+
+
 async def reason_about_matches(
     candidates: list[JobMatch], skills: list[Skill], resume_evidence: list[str]
 ) -> tuple[list[JobMatch], dict[str, str | int | float | bool | None], AIStageResult]:
     targets = candidates[:MAX_REASONED_MATCHES]
-    retry_feedback: str | None = None
-    accumulated_cost = 0.0
-    content_retries = 0
-    envelope: MatchReasoningEnvelope | None = None
-    telemetry: dict[str, str | int | float | bool | None] = {}
-
-    for attempt in range(1, MAX_MATCH_ATTEMPTS + 1):
-        result = await model_router.complete(
-            "match", build_match_prompt(targets, skills, resume_evidence, retry_feedback)
+    if not targets:
+        return (
+            [],
+            {},
+            AIStageResult(
+                stage="match_reasoning",
+                status="failed",
+                message="No scored roles were available for AI match reasoning.",
+                processed=0,
+                total=0,
+            ),
         )
-        telemetry = prefixed_model_telemetry(result, "matching")
-        accumulated_cost += result.estimated_cost_usd
-        telemetry["matching_cost_usd"] = accumulated_cost
-        telemetry["matching_content_retries"] = content_retries
 
-        if result.fallback:
-            if result.fallback_reason == "provider_error":
-                telemetry["matching_degraded_to_baseline"] = True
-                baseline = build_baseline_reasoning(targets)
-                return (
-                    baseline,
-                    telemetry,
-                    AIStageResult(
-                        stage="match_reasoning",
-                        status="partial",
-                        message=(
-                            "AI match reasoning timed out, so ranked roles are shown with "
-                            "baseline skill-overlap explanations only."
-                        ),
-                        processed=len(baseline),
-                        total=len(targets),
-                    ),
-                )
+    started = time.perf_counter()
+    batches = [
+        targets[index : index + MATCH_BATCH_SIZE]
+        for index in range(0, len(targets), MATCH_BATCH_SIZE)
+    ]
+    outcomes = await asyncio.gather(
+        *(_reason_batch(batch, skills, resume_evidence) for batch in batches)
+    )
+
+    results = [result for outcome in outcomes for result in outcome.results]
+    telemetry = aggregate_match_telemetry(results, started, len(batches))
+    telemetry["matching_content_retries"] = sum(
+        max(len(outcome.results) - 1, 0) for outcome in outcomes
+    )
+    if any(outcome.validation_failed for outcome in outcomes):
+        telemetry["matching_validation_failed"] = True
+
+    failures = [outcome for outcome in outcomes if outcome.failure_reason is not None]
+
+    if len(failures) == len(outcomes):
+        reasons = {outcome.failure_reason for outcome in failures}
+        if reasons == {"provider_not_configured"}:
             return (
                 [],
                 telemetry,
                 AIStageResult(
                     stage="match_reasoning",
                     status="failed",
-                    message=model_failure_message(result).replace(
+                    message=model_failure_message(results[-1]).replace(
                         "AI analysis", "AI match reasoning"
                     ),
                     processed=0,
                     total=len(targets),
                 ),
             )
+        telemetry["matching_degraded_to_baseline"] = True
+        baseline = build_baseline_reasoning(targets)
+        message = (
+            "The model returned invalid match reasoning, so ranked roles are shown "
+            "with baseline skill-overlap explanations only."
+            if reasons == {"invalid_content"}
+            else "AI match reasoning timed out, so ranked roles are shown with "
+            "baseline skill-overlap explanations only."
+        )
+        return (
+            baseline,
+            telemetry,
+            AIStageResult(
+                stage="match_reasoning",
+                status="partial",
+                message=message,
+                processed=len(baseline),
+                total=len(targets),
+            ),
+        )
+
+    # A batch that failed on its own no longer sinks the batches that succeeded: its
+    # roles fall back to baseline explanations while the rest keep AI reasoning.
+    reasoned: list[JobMatch] = []
+    for batch, outcome in zip(batches, outcomes, strict=True):
+        if outcome.failure_reason is None:
+            reasoned.extend(outcome.reasoned)
+        else:
+            reasoned.extend(build_baseline_reasoning(batch))
+    if failures:
+        telemetry["matching_partial_batches"] = len(failures)
+
+    ai_reasoned = sum(
+        len(outcome.reasoned) for outcome in outcomes if outcome.failure_reason is None
+    )
+    status = "succeeded" if ai_reasoned == len(targets) else "partial"
+    if not reasoned:
+        status = "failed"
+    message = (
+        None
+        if status == "succeeded"
+        else f"AI match reasoning succeeded for {ai_reasoned} of {len(targets)} roles."
+    )
+    return (
+        reasoned,
+        telemetry,
+        AIStageResult(
+            stage="match_reasoning",
+            status=status,
+            message=message,
+            processed=ai_reasoned,
+            total=len(targets),
+        ),
+    )
+
+
+async def _reason_batch(
+    batch: list[JobMatch], skills: list[Skill], resume_evidence: list[str]
+) -> _BatchOutcome:
+    retry_feedback: str | None = None
+    results: list[ModelResult] = []
+    validation_failed = False
+
+    for attempt in range(1, MAX_MATCH_ATTEMPTS + 1):
+        result = await model_router.complete(
+            "match", build_match_prompt(batch, skills, resume_evidence, retry_feedback)
+        )
+        results.append(result)
+
+        if result.fallback:
+            return _BatchOutcome([], results, validation_failed, result.fallback_reason)
+
         try:
             envelope = parse_match_reasoning(result.content)
-            break
         except ValueError:
-            telemetry["matching_validation_failed"] = True
-            content_retries += 1
+            validation_failed = True
             if attempt < MAX_MATCH_ATTEMPTS:
                 retry_feedback = (
                     "Your previous response was not valid JSON with a top-level jobs array "
                     "of the required shape. Return valid JSON only, with no other text."
                 )
                 continue
-            telemetry["matching_degraded_to_baseline"] = True
-            baseline = build_baseline_reasoning(targets)
-            return (
-                baseline,
-                telemetry,
-                AIStageResult(
-                    stage="match_reasoning",
-                    status="partial",
-                    message=(
-                        "The model returned invalid match reasoning, so ranked roles are shown "
-                        "with baseline skill-overlap explanations only."
-                    ),
-                    processed=len(baseline),
-                    total=len(targets),
-                ),
-            )
+            return _BatchOutcome([], results, True, "invalid_content")
 
-    assert envelope is not None
+        return _BatchOutcome(
+            _apply_reasoning(envelope, batch, skills, resume_evidence),
+            results,
+            validation_failed,
+            None,
+        )
 
-    candidate_by_id = {match.job.external_id: match for match in targets}
+    raise AssertionError("unreachable")
+
+
+def _apply_reasoning(
+    envelope: MatchReasoningEnvelope,
+    batch: list[JobMatch],
+    skills: list[Skill],
+    resume_evidence: list[str],
+) -> list[JobMatch]:
+    candidate_by_id = {match.job.external_id: match for match in batch}
     candidate_skills = {skill.name.lower(): skill.name for skill in skills}
     reasoned: list[JobMatch] = []
     for update in envelope.jobs:
@@ -169,26 +256,31 @@ async def reason_about_matches(
                 }
             )
         )
+    return reasoned
 
-    status = "succeeded" if len(reasoned) == len(targets) else "partial"
-    if not reasoned:
-        status = "failed"
-    message = (
-        None
-        if status == "succeeded"
-        else f"AI match reasoning succeeded for {len(reasoned)} of {len(targets)} roles."
+
+def aggregate_match_telemetry(
+    results: list[ModelResult], started: float, batch_count: int
+) -> dict[str, str | int | float | bool | None]:
+    successful = [result for result in results if not result.fallback]
+    failures = [result for result in results if result.fallback]
+    representative = successful[0] if successful else results[-1]
+    telemetry = prefixed_model_telemetry(representative, "matching")
+    telemetry.update(
+        {
+            "matching_latency_ms": round((time.perf_counter() - started) * 1000, 2),
+            "matching_cost_usd": sum(result.estimated_cost_usd for result in results),
+            "matching_attempts": sum(result.attempts for result in results),
+            "matching_input_tokens": sum(result.input_tokens for result in results),
+            "matching_output_tokens": sum(result.output_tokens for result in results),
+            "matching_batch_count": batch_count,
+            "matching_failed_batches": len(failures),
+            "matching_fallback": bool(failures),
+            "matching_fallback_reason": failures[-1].fallback_reason if failures else None,
+            "matching_error_class": failures[-1].error_class if failures else None,
+        }
     )
-    return (
-        reasoned,
-        telemetry,
-        AIStageResult(
-            stage="match_reasoning",
-            status=status,
-            message=message,
-            processed=len(reasoned),
-            total=len(targets),
-        ),
-    )
+    return telemetry
 
 
 def build_baseline_reasoning(candidates: list[JobMatch]) -> list[JobMatch]:

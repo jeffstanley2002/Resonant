@@ -55,8 +55,8 @@ class Settings(BaseSettings):
     max_job_limit: int = 40
     max_upload_bytes: int = 5 * 1024 * 1024
     daily_match_limit: int = 20
-    model_call_timeout_seconds: float = 24.0
-    model_task_budget_seconds: float = 60.0
+    model_call_timeout_seconds: float = 40.0
+    model_task_budget_seconds: float = 100.0
     cheap_model: str = ""
     strong_model: str = ""
     allow_demo_data: bool = False

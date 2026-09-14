@@ -17,7 +17,7 @@ from app.services.job_normalizer import (
     build_normalization_prompt,
     normalize_jobs,
 )
-from app.services.match_reasoning import reason_about_matches
+from app.services.match_reasoning import MATCH_BATCH_SIZE, reason_about_matches
 from app.services.model_router import ModelResult
 from app.services.ranking import synthesize_ranking
 from app.services.scoring import score_jobs
@@ -511,3 +511,122 @@ def sample_skills():
     from app.schemas import Skill
 
     return [Skill(name="Python"), Skill(name="FastAPI"), Skill(name="LangGraph")]
+
+
+def _match_jobs(count: int) -> list[JobPosting]:
+    return [
+        JobPosting(
+            external_id=f"job_{index}",
+            title="AI Backend Engineer",
+            company=f"SignalWorks {index}",
+            location="Singapore",
+            description="Build Python FastAPI LangGraph services.",
+            url="https://example.com/job",
+            required_skills=["Python", "FastAPI", "LangGraph"],
+        )
+        for index in range(count)
+    ]
+
+
+def _match_payload(external_ids: list[str]) -> str:
+    return json.dumps(
+        {
+            "jobs": [
+                {
+                    "external_id": external_id,
+                    "fit_score": 80,
+                    "matched_skills": ["Python"],
+                    "missing_skills": [],
+                    "resume_evidence": [],
+                    "job_evidence": [],
+                    "explanation": "Strong overlap on Python and FastAPI service work.",
+                    "concerns": [],
+                    "confidence": 0.8,
+                }
+                for external_id in external_ids
+            ]
+        }
+    )
+
+
+def test_match_reasoning_splits_roles_into_batches(monkeypatch) -> None:
+    """One oversized call runs long enough to trip the per-call timeout."""
+    batch_sizes: list[int] = []
+
+    class BatchingRouter:
+        async def complete(self, task: str, prompt: str) -> ModelResult:
+            external_ids = [job["external_id"] for job in json.loads(prompt)["jobs"]]
+            batch_sizes.append(len(external_ids))
+            return ModelResult(
+                content=_match_payload(external_ids),
+                model="test/model",
+                provider="test",
+                latency_ms=2,
+                estimated_cost_usd=0.001,
+                fallback=False,
+                attempts=1,
+            )
+
+    monkeypatch.setattr("app.services.match_reasoning.model_router", BatchingRouter())
+    matches = score_jobs(skills=sample_skills(), jobs=_match_jobs(12))
+
+    reasoned, telemetry, stage = asyncio.run(
+        reason_about_matches(matches, sample_skills(), ["Python FastAPI LangGraph"])
+    )
+
+    assert max(batch_sizes) <= MATCH_BATCH_SIZE
+    assert telemetry["matching_batch_count"] == len(batch_sizes)
+    assert stage.status == "succeeded"
+    assert len(reasoned) == 12
+    assert all(match.ai_status == "succeeded" for match in reasoned)
+
+
+def test_one_failed_batch_keeps_ai_reasoning_for_the_others(monkeypatch) -> None:
+    """A single timeout used to drop AI reasoning for every role in the run."""
+
+    class PartiallyFailingRouter:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, task: str, prompt: str) -> ModelResult:
+            self.calls += 1
+            external_ids = [job["external_id"] for job in json.loads(prompt)["jobs"]]
+            if "job_0" in external_ids:
+                return ModelResult(
+                    content="",
+                    model="unavailable",
+                    provider="none",
+                    latency_ms=40_000,
+                    estimated_cost_usd=0,
+                    fallback=True,
+                    fallback_reason="provider_error",
+                    error_class="TimeoutError",
+                    attempts=2,
+                )
+            return ModelResult(
+                content=_match_payload(external_ids),
+                model="test/model",
+                provider="test",
+                latency_ms=2,
+                estimated_cost_usd=0.001,
+                fallback=False,
+                attempts=1,
+            )
+
+    monkeypatch.setattr("app.services.match_reasoning.model_router", PartiallyFailingRouter())
+    matches = score_jobs(skills=sample_skills(), jobs=_match_jobs(12))
+
+    reasoned, telemetry, stage = asyncio.run(
+        reason_about_matches(matches, sample_skills(), ["Python FastAPI LangGraph"])
+    )
+
+    assert stage.status == "partial"
+    assert len(reasoned) == 12
+    ai_reasoned = [match for match in reasoned if match.ai_status == "succeeded"]
+    baseline = [match for match in reasoned if match.ai_status == "partial"]
+    # Only the roles in the failed batch fall back.
+    assert len(ai_reasoned) == 12 - MATCH_BATCH_SIZE
+    assert len(baseline) == MATCH_BATCH_SIZE
+    assert telemetry["matching_partial_batches"] == 1
+    # A partial failure must not blank out the whole run.
+    assert telemetry.get("matching_degraded_to_baseline") is None

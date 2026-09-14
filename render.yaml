@@ -57,6 +57,6 @@ services:
       - key: DAILY_MATCH_LIMIT
         value: "20"
       - key: MODEL_CALL_TIMEOUT_SECONDS
-        value: "8"
+        value: "40"
       - key: MODEL_TASK_BUDGET_SECONDS
-        value: "20"
+        value: "100"

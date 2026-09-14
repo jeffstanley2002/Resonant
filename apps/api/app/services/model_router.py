@@ -32,20 +32,32 @@ class ModelRouter:
         start = time.perf_counter()
         errors: list[Exception] = []
         attempts = 0
+        call_timeout = max(0.05, float(settings.model_call_timeout_seconds))
+        budget = max(call_timeout, float(settings.model_task_budget_seconds))
         for model in self._candidate_models(task):
             for retry in range(2):
-                remaining = settings.model_task_budget_seconds - (time.perf_counter() - start)
-                if remaining <= 0:
+                remaining = budget - (time.perf_counter() - start)
+                # Only start an attempt the budget can carry for a full call timeout.
+                # A truncated slice is guaranteed to time out and just burns the budget
+                # that the next candidate model needs.
+                if remaining < call_timeout:
                     break
                 attempts += 1
+                attempt_started = time.perf_counter()
                 try:
                     result = await asyncio.wait_for(
                         self._litellm_complete(task, prompt, model, start),
-                        timeout=min(settings.model_call_timeout_seconds, remaining),
+                        timeout=call_timeout,
                     )
                     return ModelResult(**{**result.__dict__, "attempts": attempts})
                 except Exception as exc:
                     errors.append(exc)
+                    # Distinguish our own deadline from a fast provider-side error:
+                    # both surface as TimeoutError, but re-running a call that already
+                    # exhausted the deadline will only exhaust it again.
+                    deadline_exhausted = isinstance(exc, TimeoutError) and (
+                        time.perf_counter() - attempt_started >= call_timeout - 0.5
+                    )
                     log_event(
                         "model_provider_attempt_failed",
                         task=task,
@@ -54,8 +66,9 @@ class ModelRouter:
                         attempt=attempts,
                         error_class=type(exc).__name__,
                         status_code=getattr(exc, "status_code", None),
+                        deadline_exhausted=deadline_exhausted,
                     )
-                    if retry == 0 and self._is_transient_error(exc):
+                    if retry == 0 and self._is_transient_error(exc) and not deadline_exhausted:
                         await asyncio.sleep(0.05)
                         continue
                     break

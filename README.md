@@ -1,38 +1,72 @@
 # Resonant
 
-Resonant is a secure AI job-finding assistant for a resume-worthy portfolio project. Users upload a resume, search for target roles, receive ranked job matches with fit scores and skill gaps, and can delete application data when finished.
+**An AI job-search assistant that turns your resume into ranked job matches, fit scores, and skill-gap insights.**
 
-## High-Level Architecture
-- Next.js frontend in `apps/web`.
-- FastAPI backend in `apps/api`.
-- LangGraph agent workflow for resume-to-job matching.
-- Local TF-IDF semantic ranking blended with deterministic skill-overlap scoring.
-- Supabase Auth/Postgres with RLS.
-- DeepEval and Promptfoo for AI evaluation and red-team checks.
-- Helicone and Amplitude for monitoring and analytics.
+> **Status: no longer deployed.** Resonant used to run live on Vercel, Render, and Supabase. I took it
+> down to stop paying for hosting and LLM API usage. The code is still here, and you can run it
+> locally by following the steps below.
+
+---
+
+## What It Does
+
+1. **Upload a resume.** Resonant parses it and pulls out your skills, experience, and seniority.
+2. **Search for a role.** For example, `AI Engineer` in `Singapore`. It fetches live postings from job APIs.
+3. **Get ranked matches.** Each job gets a fit score, the skills you match, the skills you're missing,
+   and a short explanation of the fit.
+4. **Save jobs and give feedback.** Bookmark good matches and rate how useful each recommendation was.
+5. **Delete your data.** One click removes everything you uploaded.
+
+## How It Works
+
+The matching pipeline is a LangGraph agent:
+
+```text
+parse_resume → analyze_resume → fetch_jobs → analyze_jobs → select_candidates
+             → reason_matches → synthesize_ranking → validate_output → persist_results
+```
+
+- **Hybrid ranking.** LLM reasoning is combined with local TF-IDF semantic similarity and a
+  deterministic skill-overlap score, so rankings don't depend only on what the model says.
+- **Model output is untrusted.** Every LLM response is checked against a schema before it's used.
+  When a stage fails, the UI shows the failure instead of inventing recommendations.
+- **Cost-aware routing.** A cheap model handles most tasks, and a stronger model is used only as a
+  fallback. Caching and daily limits keep API spend bounded.
+- **Security first.** Server-side auth, Supabase row-level security, app-layer encryption, strict
+  upload validation, rate limits, and secret scanning.
+- **Evaluated.** DeepEval tests check groundedness and ranking quality, and Promptfoo red-team cases
+  check prompt injection and malformed output.
 
 ## Tech Stack
-- TypeScript, Next.js, React.
-- Python, FastAPI, Pydantic, LangGraph.
-- Supabase Auth/Postgres.
-- LiteLLM-compatible model routing.
-- DeepEval, Promptfoo, Pytest, Playwright.
+
+| Layer      | Tools                                               |
+| ---------- | --------------------------------------------------- |
+| Frontend   | Next.js, React, TypeScript                          |
+| Backend    | Python, FastAPI, Pydantic, LangGraph                |
+| AI         | LiteLLM-compatible model routing, TF-IDF ranking    |
+| Data/Auth  | Supabase Postgres + Auth with RLS                   |
+| Testing    | Pytest, Playwright, DeepEval, Promptfoo             |
+| Monitoring | Helicone, Amplitude                                 |
 
 ## Repository Structure
+
 ```text
 apps/
   web/       Next.js frontend
-  api/       FastAPI backend
+  api/       FastAPI backend and LangGraph agent
 packages/
   shared/    Shared TypeScript contracts
 supabase/    SQL migrations and RLS policies
 evals/       DeepEval and Promptfoo suites
-examples/    Safe sample resumes for demos and red-team walkthroughs
-tests/       Deterministic tests
-scripts/     Security and setup helpers
+examples/    Sample resumes (including a prompt-injection test case)
+tests/       API and security tests
+scripts/     Setup and security helpers
 ```
 
-## Local Setup
+## Running It Locally
+
+Requirements: Node 20+ and Python 3.11+.
+
 ```bash
 npm install
 python3 -m venv apps/api/.venv
@@ -40,81 +74,39 @@ apps/api/.venv/bin/pip install -e 'apps/api[dev]'
 cp .env.example .env
 ```
 
-## Environment Configuration
-Copy `.env.example` and fill in real values locally or in Vercel/Render dashboards. Never commit `.env`.
-The API loads env values from `.env`, `apps/.env`, and `apps/api/.env` in that order, with later
-files overriding earlier ones. Keep backend-only secrets out of `apps/web/.env.local`; the web app
-should only use `NEXT_PUBLIC_*` values.
+In `.env`, set:
 
-## Run The Application
+- `DEMO_AUTH=true` to skip Supabase sign-in during local development.
+- `OPENAI_API_KEY` and `CHEAP_MODEL` for AI analysis.
+- Adzuna (`ADZUNA_APP_ID`, `ADZUNA_APP_KEY`) or Apify (`APIFY_MCF_RUN_URL`, `APIFY_API_TOKEN`)
+  for live job listings. Alternatively, set `ALLOW_DEMO_DATA=true` to use the bundled sample jobs.
+
+Start both services:
+
 ```bash
-npm run dev:web
-npm run dev:api
+npm run dev:api   # http://localhost:8000
+npm run dev:web   # http://localhost:3000
 ```
 
-Or run both services through Docker Compose:
+Or use Docker:
+
 ```bash
 docker compose up --build
 ```
 
-The compose stack starts the API on `http://localhost:8000` and the web app on
-`http://localhost:3000`.
+To try it out, upload `examples/resume_ai_engineer.txt`.
 
-With `DEMO_AUTH=true` in local development, authentication works without Supabase. AI analysis
-still requires a configured model provider. Set `ALLOW_DEMO_DATA=true` only for explicitly labeled
-curated job fixtures. Production rejects demo authentication at startup.
-Backend npm scripts use `scripts/api_python.py`, which selects `apps/api/.venv/bin/python`
-locally and falls back to the active Python interpreter in CI.
+## Tests
 
-For live job data, configure either Adzuna (`ADZUNA_APP_ID`, `ADZUNA_APP_KEY`) or the
-Apify MyCareersFuture actor (`APIFY_MCF_RUN_URL`, `APIFY_API_TOKEN`). Adzuna is used first
-when both are present; Apify is the secondary real-data source.
-
-For live AI, set `OPENAI_API_KEY` and `CHEAP_MODEL` in Render. Leave `STRONG_MODEL` blank
-for the lowest-cost route; if configured, it is used only as a fallback for match and rank
-tasks after the cheap model fails. If no model is configured, the API and UI report
-the failed AI stage and generate no synthetic recommendations.
-
-For production persistence, generate a backend-only app encryption key:
 ```bash
-apps/api/.venv/bin/python scripts/generate_encryption_key.py
+npm run test            # backend and security tests
+npm run eval:deepeval   # AI quality evals
+npm run eval:promptfoo  # prompt-injection red-team checks
+npm run e2e             # Playwright end-to-end tests
 ```
 
-Set the generated value as `APP_ENCRYPTION_KEY` in Render only.
+None of the eval gates need API keys.
 
-## Run Tests
-```bash
-npm run test
-npm run test:api
-npm run security:scan
-npm run eval:promptfoo
-npm run eval:deepeval
-```
+## License
 
-The required DeepEval and Promptfoo release gates run without provider keys or paid services.
-Configured providers add live extraction, normalization, reasoning, and ranking paths on top of those gates.
-
-## Important Development Commands
-```bash
-npm run lint
-npm run typecheck
-npm run audit
-npm run repo:hygiene
-npm run hooks:install      # optional local pre-commit guard for first push
-npm run deploy:check        # validates the template and frontend secret boundaries
-npm run deploy:check:prod
-npm run smoke:demo -- --api http://127.0.0.1:8000
-```
-
-## Security
-Read `SECURITY_CHECKLIST.md` before adding features. The project is designed around server-side auth, Supabase RLS, app-layer encryption, validation, response trimming, upload restrictions, rate limits, secret scanning, and free-tier-safe deployment.
-
-## Portfolio Positioning
-Use [PORTFOLIO_BRIEF.md](/Users/jeffrey/Desktop/projects/job/PORTFOLIO_BRIEF.md) for resume bullets, an interview pitch, demo flow, and technical proof points.
-
-Use [DESIGN.md](/Users/jeffrey/Desktop/projects/job/DESIGN.md) for product taste, UI rules, and demo-facing design constraints.
-
-Use [DEMO_GUIDE.md](/Users/jeffrey/Desktop/projects/job/DEMO_GUIDE.md) plus the sample resumes in `examples/` for recruiter walkthroughs and red-team demonstrations.
-
-## Deployment
-Use [DEPLOYMENT_RUNBOOK.md](/Users/jeffrey/Desktop/projects/job/DEPLOYMENT_RUNBOOK.md) when moving from local MVP to Supabase, Render, and Vercel.
+Shared for learning and reference. Feel free to explore the code.
